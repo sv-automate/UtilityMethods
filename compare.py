@@ -4,8 +4,8 @@ import json
 
 # === Step 1: Load CSV Files ===
 def load_csvs(file1_path: str, file2_path: str):
-    df_file1 = pd.read_csv(file1_path)
-    df_file2 = pd.read_csv(file2_path)
+    df_file1 = pd.read_csv(file1_path, dtype=str).fillna("__EMPTY__")
+    df_file2 = pd.read_csv(file2_path, dtype=str).fillna("__EMPTY__")
     return df_file1, df_file2
 
 # === Step 2: Count Difference ===
@@ -17,11 +17,16 @@ def get_count_difference(df_file1: pd.DataFrame, df_file2: pd.DataFrame):
     }
 
 # === Step 3: Compare Column Values ===
-def compare_column_values(df_file1: pd.DataFrame, df_file2: pd.DataFrame):
+def compare_column_values(df_file1: pd.DataFrame, df_file2: pd.DataFrame, skip_columns=None):
+    if skip_columns is None:
+        skip_columns = []
+
     comparison_result = {}
-    for col in df_file1.columns:
-        file1_vals = set(df_file1[col].dropna().unique())
-        file2_vals = set(df_file2[col].dropna().unique())
+    columns_to_check = [col for col in df_file1.columns if col not in skip_columns]
+
+    for col in columns_to_check:
+        file1_vals = set(df_file1[col].fillna("__EMPTY__").unique())
+        file2_vals = set(df_file2[col].fillna("__EMPTY__").unique())
         common_vals = file1_vals & file2_vals
         file1_only_vals = file1_vals - file2_vals
         file2_only_vals = file2_vals - file1_vals
@@ -34,20 +39,29 @@ def compare_column_values(df_file1: pd.DataFrame, df_file2: pd.DataFrame):
                 "difference_count": int(len(file1_only_vals) + len(file2_only_vals))
             },
             "details": {
-                "common_values": sorted(map(str, common_vals)),
-                "file1_only_values": sorted(map(str, file1_only_vals)),
-                "file2_only_values": sorted(map(str, file2_only_vals))
+                "common_values": sorted(common_vals),
+                "file1_only_values": sorted(file1_only_vals),
+                "file2_only_values": sorted(file2_only_vals)
             }
         }
     return comparison_result
 
 # === Step 4: Get Missing Rows in File2 ===
-def find_missing_rows(df_file1: pd.DataFrame, df_file2: pd.DataFrame):
-    merged = df_file1.merge(df_file2.drop_duplicates(), how='outer', indicator=True)
+def find_missing_rows(df_file1: pd.DataFrame, df_file2: pd.DataFrame, skip_columns=None):
+    if skip_columns is None:
+        skip_columns = []
+
+    compare_cols = [col for col in df_file1.columns if col not in skip_columns]
+
+    # Fill NaN with marker value
+    file1_comp = df_file1[compare_cols].fillna("__EMPTY__")
+    file2_comp = df_file2[compare_cols].fillna("__EMPTY__")
+
+    merged = file1_comp.merge(file2_comp.drop_duplicates(), how='outer', indicator=True)
     missing = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge'])
     return missing
 
-# === Step 5: Convert Types for JSON ===
+# === Step 5: Convert for JSON ===
 def convert_types(obj):
     if isinstance(obj, (np.integer, np.int64)):
         return int(obj)
@@ -56,7 +70,7 @@ def convert_types(obj):
     elif isinstance(obj, (np.ndarray,)):
         return obj.tolist()
     elif pd.isna(obj):
-        return None
+        return "__EMPTY__"
     return obj
 
 def convert_all(obj):
@@ -67,7 +81,7 @@ def convert_all(obj):
     else:
         return convert_types(obj)
 
-# === Step 6: Save Results as JSON ===
+# === Step 6: Save Results ===
 def save_results_as_json(count_diff, column_diff, missing_rows, filename="comparison_results.json"):
     output = {
         "count_difference": count_diff,
@@ -77,7 +91,6 @@ def save_results_as_json(count_diff, column_diff, missing_rows, filename="compar
     with open(filename, "w") as f:
         json.dump(convert_all(output), f, indent=4)
 
-# === Step 7: Save Results as Excel ===
 def save_results_as_excel(column_diff, missing_rows, filename="comparison_results.xlsx"):
     with pd.ExcelWriter(filename) as writer:
         for col, data in column_diff.items():
@@ -91,17 +104,16 @@ def save_results_as_excel(column_diff, missing_rows, filename="comparison_result
             summary_df.to_excel(writer, sheet_name=f"{col}_summary", index=False)
             details_df.to_excel(writer, sheet_name=f"{col}_details", index=False)
 
-        # Add sheet for missing rows
         if not missing_rows.empty:
             missing_rows.to_excel(writer, sheet_name="missing_in_file2", index=False)
 
-# === Step 8: Main Function to Run All Steps ===
-def run_comparison(file1_path: str, file2_path: str):
+# === Step 7: Main Runner ===
+def run_comparison(file1_path: str, file2_path: str, skip_columns=None):
     df_file1, df_file2 = load_csvs(file1_path, file2_path)
 
     count_diff = get_count_difference(df_file1, df_file2)
-    column_diff = compare_column_values(df_file1, df_file2)
-    missing_rows = find_missing_rows(df_file1, df_file2)
+    column_diff = compare_column_values(df_file1, df_file2, skip_columns)
+    missing_rows = find_missing_rows(df_file1, df_file2, skip_columns)
 
     save_results_as_json(count_diff, column_diff, missing_rows)
     save_results_as_excel(column_diff, missing_rows)
@@ -110,6 +122,7 @@ def run_comparison(file1_path: str, file2_path: str):
     print("📁 JSON saved as: comparison_results.json")
     print("📁 Excel saved as: comparison_results.xlsx")
 
-# === Optional CLI Runner ===
+# === CLI Example ===
 if __name__ == "__main__":
-    run_comparison("file1.csv", "file2.csv")
+    columns_to_skip = ["id", "timestamp"]  # Example: skip these columns
+    run_comparison("file1.csv", "file2.csv", skip_columns=columns_to_skip)
