@@ -1,5 +1,6 @@
 import pandas as pd
 import json
+import re
 
 def load_csv_files(file1_path: str, file2_path: str) -> tuple:
     df_file1 = pd.read_csv(file1_path)
@@ -80,34 +81,37 @@ def compare_column_values(df_file1: pd.DataFrame, df_file2: pd.DataFrame, skip_c
 
     return comparison_result
 
+def sanitize_sheet_name(name: str, suffix: str = "") -> str:
+    name = re.sub(r"[\\/*?:[\]]", "_", name)
+    base = name[:31 - len(suffix)]
+    return f"{base}{suffix}"
+
 def save_results_to_json(result: dict, output_path: str):
     with open(output_path, 'w') as f:
         json.dump(result, f, indent=4)
 
 def save_results_to_excel(result: dict, output_path: str):
     with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
-        pd.DataFrame([result["record_counts"]]).to_excel(writer, sheet_name="Record Counts", index=False)
+        pd.DataFrame([result["record_counts"]]).to_excel(writer, sheet_name="Record_Counts", index=False)
 
         for col, data in result["column_comparisons"].items():
-            safe_col = col[:28]  # Excel sheet name limit
-
             summary_df = pd.DataFrame([data["summary"]])
-            summary_df.to_excel(writer, sheet_name=f"{safe_col}_Summary", index=False)
+            summary_df.to_excel(writer, sheet_name=sanitize_sheet_name(col, "_Summary"), index=False)
 
             common_df = pd.DataFrame.from_dict(data["details"]["common_values"], orient='index').reset_index()
-            if not common_df.empty and common_df.shape[1] == 3:
+            if not common_df.empty:
                 common_df.columns = [col, "file1_count", "file2_count"]
-            common_df.to_excel(writer, sheet_name=f"{safe_col}_Common", index=False)
+            common_df.to_excel(writer, sheet_name=sanitize_sheet_name(col, "_Common"), index=False)
 
             file1_only_df = pd.DataFrame.from_dict(data["details"]["file1_only_values"], orient='index').reset_index()
-            if not file1_only_df.empty and file1_only_df.shape[1] == 3:
+            if not file1_only_df.empty:
                 file1_only_df.columns = [col, "count", "ids"]
-            file1_only_df.to_excel(writer, sheet_name=f"{safe_col}_File1Only", index=False)
+            file1_only_df.to_excel(writer, sheet_name=sanitize_sheet_name(col, "_File1Only"), index=False)
 
             file2_only_df = pd.DataFrame.from_dict(data["details"]["file2_only_values"], orient='index').reset_index()
-            if not file2_only_df.empty and file2_only_df.shape[1] == 3:
+            if not file2_only_df.empty:
                 file2_only_df.columns = [col, "count", "ids"]
-            file2_only_df.to_excel(writer, sheet_name=f"{safe_col}_File2Only", index=False)
+            file2_only_df.to_excel(writer, sheet_name=sanitize_sheet_name(col, "_File2Only"), index=False)
 
 if __name__ == "__main__":
     file1_path = "file1.csv"
